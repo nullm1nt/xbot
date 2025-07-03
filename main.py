@@ -238,7 +238,7 @@ class NewsBot:
         return post
         
     def engage_with_community(self):
-        """Engage with community posts to grow followers"""
+        """Light engagement to grow followers (within free tier limits)"""
         try:
             # Search for recent tweets about crypto/AI
             search_queries = ['#Bitcoin', '#Ethereum', '#AI', '#ChatGPT', '#DeFi']
@@ -247,20 +247,18 @@ class NewsBot:
             # Get recent tweets
             tweets = self.client.search_recent_tweets(
                 query=f"{query} -is:retweet",
-                max_results=10,
+                max_results=5,  # Reduced from 10
                 tweet_fields=['public_metrics', 'author_id']
             )
             
             if tweets.data:
-                # Like and retweet high-engagement posts
-                for tweet in tweets.data[:2]:  # Limit to 2 interactions per cycle
-                    if tweet.public_metrics['like_count'] > 50:  # Only engage with popular tweets
+                # Light engagement - only 1 interaction per cycle
+                for tweet in tweets.data[:1]:  # Only 1 interaction per cycle (was 2)
+                    if tweet.public_metrics['like_count'] > 100:  # Higher threshold for quality
                         try:
                             self.client.like(tweet.id)
-                            time.sleep(2)  # Rate limiting
-                            if tweet.public_metrics['retweet_count'] > 20:
-                                self.client.retweet(tweet.id)
-                            logger.info(f"Engaged with tweet: {tweet.id}")
+                            logger.info(f"Liked high-quality tweet: {tweet.id}")
+                            break  # Only one action per cycle
                         except Exception as e:
                             logger.error(f"Failed to engage with tweet: {e}")
                             

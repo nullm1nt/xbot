@@ -1,7 +1,7 @@
 name: News Bot
 on:
   schedule:
-    - cron: '0 8,14,20 * * *'  # 8 AM, 2 PM, 8 PM UTC
+    - cron: '0 8,14,20 * * *'  # 8 AM, 2 PM, 8 PM UTC - 3 posts daily
   workflow_dispatch:
 
 jobs:
