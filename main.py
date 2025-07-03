@@ -220,42 +220,94 @@ class NewsBot:
         return filtered_stories
         
     def format_post(self, story):
-        """Format story into a well-structured 2-3 sentence post with hashtags"""
+        """Format story into a professional, engaging post"""
+        
+        # Enhanced emoji mapping with variety
         emoji_map = {
-            'crypto': ['🚀', '💰', '⚡', '🌟', '🔥', '💎'],
-            'ai': ['🤖', '🧠', '⚡', '🚀', '💡', '🔮']
+            'crypto': {
+                'surge': '🚀', 'pump': '📈', 'rally': '💹', 'spike': '⚡',
+                'hack': '🚨', 'exploit': '⚠️', 'launch': '🌟', 'adoption': '💎',
+                'breakthrough': '🔥', 'default': '💰'
+            },
+            'ai': {
+                'breakthrough': '🔬', 'launch': '🚀', 'model': '🧠', 'chatgpt': '💬',
+                'openai': '💡', 'claude': '🤖', 'innovation': '⚡', 'default': '🤖'
+            }
         }
         
-        emoji = random.choice(emoji_map.get(story['type'], ['🔥']))
+        # Smart emoji selection based on content
+        story_lower = (story['title'] + ' ' + story.get('content', '')).lower()
+        story_type = story['type']
+        emoji = emoji_map[story_type]['default']
         
-        # Clean and shorten title
-        title = story['title'][:100] + '...' if len(story['title']) > 100 else story['title']
+        for keyword, emoji_choice in emoji_map[story_type].items():
+            if keyword in story_lower:
+                emoji = emoji_choice
+                break
         
-        # Start building post
-        post = f"{emoji} {title}\n\n"
-            
-        # Add brief context if available
-        if story['content'] and len(story['content']) > 10:
-            context = story['content'][:80] + '...' if len(story['content']) > 80 else story['content']
-            post += f"{context}\n\n"
-            
-        # Add hashtags for better reach
-        hashtags = story.get('hashtags', [])
+        # Clean and format title
+        title = story['title'].strip()
+        if title.startswith(('🚀', '💰', '🤖', '🧠', '⚡', '🌟', '🔥', '💎')):
+            title = title[2:].strip()  # Remove existing emoji
+        
+        # Build professional post structure
+        if story['type'] == 'crypto':
+            # Crypto posts - emphasize market action
+            post = f"{emoji} {title}\n\n"
+        else:
+            # AI posts - emphasize innovation
+            post = f"{emoji} {title}\n\n"
+        
+        # Add compelling context with better formatting
+        if story.get('content') and len(story['content']) > 15:
+            context = story['content'].strip()
+            # Clean up common RSS artifacts
+            context = context.replace('...', '').replace('[...]', '').strip()
+            if len(context) > 85:
+                context = context[:82] + '...'
+            post += f"→ {context}\n\n"
+        
+        # Add strategic hashtags (max 3 for readability)
+        hashtags = story.get('hashtags', [])[:3]  # Limit to 3
         if hashtags:
-            hashtag_text = ' '.join(hashtags)
-            post += f"{hashtag_text}\n\n"
-            
-        # Add link
-        post += f"🔗 {story['url']}"
+            post += f"{' '.join(hashtags)}\n\n"
         
-        # Ensure post is under 280 characters
+        # Professional link formatting
+        source_name = self.get_source_name(story['url'])
+        post += f"🔗 Read more: {source_name}"
+        
+        # Ensure under 280 characters with fallback
         if len(post) > 280:
-            # Remove hashtags if too long
-            post = f"{emoji} {title}\n\n{story['content'][:60]}...\n\n🔗 {story['url']}"
-            if len(post) > 280:
-                post = post[:276] + '...'
+            # Shorter version if too long
+            short_context = story.get('content', '')[:45] + '...' if story.get('content') else ''
+            post = f"{emoji} {title}\n\n"
+            if short_context:
+                post += f"→ {short_context}\n\n"
+            post += f"{' '.join(hashtags[:2])}\n\n🔗 {source_name}"
             
+            if len(post) > 280:
+                post = f"{emoji} {title}\n\n{' '.join(hashtags[:2])}\n\n🔗 {source_name}"
+        
         return post
+        
+    def get_source_name(self, url):
+        """Extract clean source name from URL"""
+        if 'coindesk.com' in url:
+            return 'CoinDesk'
+        elif 'coingecko.com' in url:
+            return 'CoinGecko'
+        elif 'technologyreview.com' in url:
+            return 'MIT Tech Review'
+        elif 'news.ycombinator.com' in url:
+            return 'Hacker News'
+        else:
+            # Extract domain name
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc
+                return domain.replace('www.', '').title()
+            except:
+                return 'Source'
         
     def engage_with_community(self):
         """Light engagement to grow followers (within free tier limits)"""
