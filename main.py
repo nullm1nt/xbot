@@ -272,9 +272,9 @@ class NewsBot:
         if hashtags:
             post += f"{' '.join(hashtags)}\n\n"
         
-        # Professional link formatting
+        # Clean link formatting with actual URL
         source_name = self.get_source_name(story['url'])
-        post += f"🔗 Read more: {source_name}"
+        post += f"🔗 {source_name}: {story['url']}"
         
         # Ensure under 280 characters with fallback
         if len(post) > 280:
@@ -283,10 +283,10 @@ class NewsBot:
             post = f"{emoji} {title}\n\n"
             if short_context:
                 post += f"→ {short_context}\n\n"
-            post += f"{' '.join(hashtags[:2])}\n\n🔗 {source_name}"
+            post += f"{' '.join(hashtags[:2])}\n\n🔗 {story['url']}"
             
             if len(post) > 280:
-                post = f"{emoji} {title}\n\n{' '.join(hashtags[:2])}\n\n🔗 {source_name}"
+                post = f"{emoji} {title}\n\n{' '.join(hashtags[:2])}\n\n🔗 {story['url']}"
         
         return post
         
