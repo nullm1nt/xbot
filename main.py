@@ -153,7 +153,7 @@ class NewsBot:
                     story_response = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{story_id}.json', timeout=5)
                     if story_response.status_code == 200:
                         story_data = story_response.json()
-                        if story_data.get('title') and any(keyword in story_data['title'].lower() for keyword in ['ai', 'artificial intelligence', 'openai', 'chatgpt', 'llm', 'gpt', 'claude']):
+                        if story_data.get('title') and any(keyword in story_data['title'].lower() for keyword in ['openai', 'chatgpt', 'llm', 'gpt-4', 'gpt-3', 'claude', 'artificial intelligence breakthrough', 'ai model', 'machine learning breakthrough']):
                             story = {
                                 'title': story_data['title'],
                                 'content': f"Discussion on Hacker News with {story_data.get('score', 0)} points",
@@ -175,12 +175,25 @@ class NewsBot:
             'breakthrough', 'revolutionary', 'first ever', 'record', 'massive', 'huge',
             'hack', 'exploit', 'vulnerability', 'surge', 'crash', 'skyrocket',
             'launch', 'release', 'unveil', 'announce', 'partnership', 'acquisition',
-            'milestone', 'achievement', 'innovation', 'disruption', 'game-changer'
+            'milestone', 'achievement', 'innovation', 'disruption', 'game-changer',
+            'billion', 'million', 'new high', 'all-time', 'major', 'funding'
+        ]
+        
+        # Exclude irrelevant content
+        exclude_keywords = [
+            'road', 'travel', 'transportation', 'geography', 'taiga', 'highway',
+            'recipe', 'cooking', 'food', 'restaurant', 'weather', 'climate'
         ]
         
         filtered_stories = []
         for story in stories:
             story_text = (story['title'] + ' ' + story['content']).lower()
+            
+            # Skip if contains excluded keywords
+            if any(keyword in story_text for keyword in exclude_keywords):
+                continue
+                
+            # Only include if contains interesting keywords
             if any(keyword in story_text for keyword in interesting_keywords):
                 filtered_stories.append(story)
                 
