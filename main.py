@@ -77,17 +77,27 @@ class NewsBot:
         except Exception as e:
             logger.error(f"Error fetching CoinGecko trending: {e}")
             
-        # CoinDesk RSS
+        # CoinDesk RSS - only last 6 hours for ultra-fresh crypto news
         try:
             feed = feedparser.parse('https://www.coindesk.com/arc/outboundfeeds/rss/')
-            for entry in feed.entries[:5]:
-                if any(keyword in entry.title.lower() for keyword in ['hack', 'exploit', 'surge', 'crash', 'breakthrough', 'launch', 'adoption']):
+            current_time = datetime.now()
+            for entry in feed.entries[:15]:  # Check more entries for recent content
+                # Check if article is from last 6 hours (ultra-fresh for crypto)
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    article_time = datetime(*entry.published_parsed[:6])
+                    hours_old = (current_time - article_time).total_seconds() / 3600
+                    if hours_old > 6:  # Skip if older than 6 hours
+                        continue
+                        
+                if any(keyword in entry.title.lower() for keyword in ['hack', 'exploit', 'surge', 'crash', 'breakthrough', 'launch', 'adoption', 'pump', 'rally', 'spike', 'soar']):
                     story = {
                         'title': entry.title,
                         'content': entry.summary[:200] + '...' if len(entry.summary) > 200 else entry.summary,
                         'url': entry.link,
                         'type': 'crypto',
-                        'hashtags': self.get_relevant_hashtags(entry.title, 'crypto')
+                        'hashtags': self.get_relevant_hashtags(entry.title, 'crypto'),
+                        'published': article_time if hasattr(entry, 'published_parsed') else current_time,
+                        'hours_old': hours_old if hasattr(entry, 'published_parsed') else 0
                     }
                     stories.append(story)
         except Exception as e:
@@ -128,17 +138,27 @@ class NewsBot:
         """Fetch AI news from multiple sources"""
         stories = []
         
-        # MIT Technology Review AI RSS
+        # MIT Technology Review AI RSS - last 3 days (more flexibility for AI news)
         try:
             feed = feedparser.parse('https://www.technologyreview.com/feed/')
-            for entry in feed.entries[:5]:
-                if any(keyword in entry.title.lower() for keyword in ['ai', 'artificial intelligence', 'machine learning', 'openai', 'chatgpt', 'llm', 'neural', 'robot']):
+            current_time = datetime.now()
+            for entry in feed.entries[:8]:  # Check AI entries
+                # Check if article is from last 3 days (more flexible for AI)
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    article_time = datetime(*entry.published_parsed[:6])
+                    days_old = (current_time - article_time).days
+                    if days_old > 3:  # Skip if older than 3 days
+                        continue
+                        
+                if any(keyword in entry.title.lower() for keyword in ['ai breakthrough', 'artificial intelligence', 'machine learning', 'openai', 'chatgpt', 'gpt-4', 'claude', 'neural network', 'deep learning']):
                     story = {
                         'title': entry.title,
                         'content': entry.summary[:200] + '...' if len(entry.summary) > 200 else entry.summary,
                         'url': entry.link,
                         'type': 'ai',
-                        'hashtags': self.get_relevant_hashtags(entry.title, 'ai')
+                        'hashtags': self.get_relevant_hashtags(entry.title, 'ai'),
+                        'published': article_time if hasattr(entry, 'published_parsed') else current_time,
+                        'days_old': days_old if hasattr(entry, 'published_parsed') else 0
                     }
                     stories.append(story)
         except Exception as e:
@@ -297,8 +317,19 @@ class NewsBot:
             self.engage_with_community()
             return
             
-        # Select best story
-        best_story = random.choice(new_stories)
+        # Prioritize crypto stories by freshness, AI stories by quality
+        crypto_stories = [s for s in new_stories if s['type'] == 'crypto']
+        ai_stories = [s for s in new_stories if s['type'] == 'ai']
+        
+        if crypto_stories:
+            # For crypto, prioritize by freshness (sort by hours_old if available)
+            crypto_stories.sort(key=lambda x: x.get('hours_old', 999))
+            best_story = crypto_stories[0]  # Most recent crypto story
+        elif ai_stories:
+            # For AI, just pick randomly from available stories
+            best_story = random.choice(ai_stories)
+        else:
+            best_story = random.choice(new_stories)
         
         # Format and post
         formatted_post = self.format_post(best_story)
@@ -309,7 +340,7 @@ class NewsBot:
             logger.info(f"Posted story: {best_story['title']}")
             
             # Engage with community after posting
-            time.sleep(30)  # Wait before engaging
+            time.sleep(5)  # Quick wait before engaging (reduced from 30 seconds)
             self.engage_with_community()
         else:
             logger.error("Failed to post story")
