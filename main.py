@@ -184,15 +184,8 @@ class NewsBot:
         else:
             prefix = ''
             
-        # Extract price if mentioned
-        price_match = re.search(r'\$[\d,]+(?:\.\d+)?', title + ' ' + content)
-        if price_match:
-            price_info = f" at {price_match.group()}"
-        else:
-            price_info = ''
-            
-        # Create summary
-        summary = f"{prefix}{title}{price_info}"
+        # Create summary without price extraction to avoid confusion
+        summary = f"{prefix}{title}"
         
         # Ensure under 280 characters
         if len(summary) > 280:
