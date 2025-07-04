@@ -161,6 +161,49 @@ class NewsBot:
         except Exception as e:
             logger.error(f"Error fetching CryptoSlate RSS: {e}")
             
+        # On-chain data sources
+        try:
+            # Whale Alert API (free tier)
+            whale_response = requests.get('https://api.whale-alert.io/v1/transactions?api_key=demo&min_value=1000000', timeout=10)
+            if whale_response.status_code == 200:
+                whale_data = whale_response.json()
+                for tx in whale_data.get('transactions', [])[:3]:
+                    if tx.get('blockchain') in ['bitcoin', 'ethereum']:
+                        amount = tx.get('amount', 0)
+                        if amount > 10000000:  # $10M+ transactions
+                            story = {
+                                'title': f"Whale Alert: {amount/1000000:.1f}M {tx.get('symbol', 'crypto').upper()} moved",
+                                'content': f"Large transaction detected on {tx.get('blockchain')} blockchain",
+                                'url': f"https://whale-alert.io/transaction/{tx.get('hash', '')}",
+                                'type': 'crypto',
+                                'source': 'Whale Alert',
+                                'published': datetime.now(),
+                                'hours_old': 0
+                            }
+                            stories.append(story)
+        except Exception as e:
+            logger.error(f"Error fetching Whale Alert: {e}")
+            
+        # DeFiPulse API for DeFi protocol updates
+        try:
+            defi_response = requests.get('https://api.defipulse.com/v1/defi', timeout=10)
+            if defi_response.status_code == 200:
+                defi_data = defi_response.json()
+                for protocol in defi_data[:3]:
+                    if protocol.get('change_1d', 0) > 20:  # 20%+ daily change
+                        story = {
+                            'title': f"{protocol.get('name')} TVL {protocol.get('change_1d', 0):.1f}% in 24h",
+                            'content': f"Total Value Locked: ${protocol.get('value', 0)/1000000:.1f}M",
+                            'url': f"https://defipulse.com/{protocol.get('slug', '')}",
+                            'type': 'crypto',
+                            'source': 'DeFiPulse',
+                            'published': datetime.now(),
+                            'hours_old': 0
+                        }
+                        stories.append(story)
+        except Exception as e:
+            logger.error(f"Error fetching DeFiPulse: {e}")
+            
         return stories
         
     def summarize_news(self, story):
@@ -268,6 +311,33 @@ class NewsBot:
                 stories.append(story)
         except Exception as e:
             logger.error(f"Error fetching AI News: {e}")
+            
+        # Mirror Protocol (Terra ecosystem)
+        try:
+            mirror_response = requests.get('https://graph.mirror.finance/graphql', timeout=10)
+            # Add Mirror data processing here
+        except Exception as e:
+            logger.error(f"Error fetching Mirror data: {e}")
+            
+        # Compound Protocol governance
+        try:
+            compound_response = requests.get('https://api.compound.finance/api/v2/governance/proposals', timeout=10)
+            if compound_response.status_code == 200:
+                proposals = compound_response.json()
+                for proposal in proposals.get('proposals', [])[:2]:
+                    if proposal.get('state') == 'Active':
+                        story = {
+                            'title': f"Compound Governance: {proposal.get('title', 'New proposal')}",
+                            'content': f"Proposal #{proposal.get('id')} is live for voting",
+                            'url': f"https://compound.finance/governance/proposals/{proposal.get('id')}",
+                            'type': 'crypto',
+                            'source': 'Compound',
+                            'published': datetime.now(),
+                            'hours_old': 0
+                        }
+                        stories.append(story)
+        except Exception as e:
+            logger.error(f"Error fetching Compound governance: {e}")
             
         return stories
         
