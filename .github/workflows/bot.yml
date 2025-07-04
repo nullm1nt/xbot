@@ -1,7 +1,7 @@
 name: News Bot
 on:
   schedule:
-    - cron: '0 8,14,20 * * *'  # 8 AM, 2 PM, 8 PM UTC - 3 posts daily
+    - cron: '0 */2 * * *'  # Every 2 hours
   workflow_dispatch:
 
 jobs:
@@ -22,4 +22,5 @@ jobs:
           TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
           TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
           TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+          GITHUB_ACTIONS: true
         run: python -c "from main import NewsBot; bot = NewsBot(); bot.run_posting_cycle()"

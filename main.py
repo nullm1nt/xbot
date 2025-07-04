@@ -1,6 +1,5 @@
 import tweepy
 import requests
-import schedule
 import time
 import os
 import json
@@ -9,6 +8,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import logging
 import random
+import re
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -21,6 +22,7 @@ class NewsBot:
         self.setup_twitter_client()
         self.posted_stories = set()
         self.load_posted_stories()
+        self.last_post_time = None
         
     def setup_twitter_client(self):
         """Initialize Twitter API client"""
@@ -40,21 +42,31 @@ class NewsBot:
     def load_posted_stories(self):
         """Load previously posted stories to avoid duplicates"""
         try:
-            with open('posted_stories.json', 'r') as f:
-                self.posted_stories = set(json.load(f))
+            # Use environment variable for GitHub Actions
+            posted_urls = os.getenv('POSTED_STORIES', '')
+            if posted_urls:
+                self.posted_stories = set(posted_urls.split(','))
+            else:
+                with open('posted_stories.json', 'r') as f:
+                    self.posted_stories = set(json.load(f))
         except FileNotFoundError:
             self.posted_stories = set()
             
     def save_posted_stories(self):
-        """Save posted stories to file"""
-        with open('posted_stories.json', 'w') as f:
-            json.dump(list(self.posted_stories), f)
+        """Save posted stories to file (local only)"""
+        try:
+            with open('posted_stories.json', 'w') as f:
+                json.dump(list(self.posted_stories), f)
+        except:
+            pass  # Ignore errors in GitHub Actions
             
-    def get_trending_hashtags(self):
-        """Get trending crypto/AI hashtags"""
-        crypto_hashtags = ['#Bitcoin', '#Ethereum', '#Crypto', '#DeFi', '#NFT', '#Web3', '#Blockchain', '#BTC', '#ETH']
-        ai_hashtags = ['#AI', '#MachineLearning', '#ChatGPT', '#OpenAI', '#TechNews', '#Innovation', '#Future', '#ML', '#DeepLearning']
-        return crypto_hashtags + ai_hashtags
+    def get_news_apis(self):
+        """Get additional news sources"""
+        return {
+            'newsapi': f'https://newsapi.org/v2/everything?q=bitcoin OR ethereum OR cryptocurrency&sortBy=publishedAt&pageSize=10&apiKey={os.getenv("NEWS_API_KEY", "")}',
+            'cryptonews': 'https://cryptonews-api.com/api/v1/category?section=general&items=10&page=1&token=' + os.getenv('CRYPTONEWS_API_KEY', ''),
+            'alphavantage': f'https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=CRYPTO:BTC,CRYPTO:ETH&apikey={os.getenv("ALPHA_VANTAGE_KEY", "")}'
+        }
         
     def get_crypto_news(self):
         """Fetch crypto news from multiple sources"""
@@ -67,275 +79,265 @@ class NewsBot:
                 trending = response.json()['coins'][:3]
                 for coin in trending:
                     story = {
-                        'title': f"🚀 {coin['item']['name']} ({coin['item']['symbol']}) is trending #1 on CoinGecko",
+                        'title': f"{coin['item']['name']} ({coin['item']['symbol']}) trending on CoinGecko",
                         'content': f"Market cap rank: #{coin['item']['market_cap_rank']}",
                         'url': f"https://www.coingecko.com/en/coins/{coin['item']['id']}",
                         'type': 'crypto',
-                        'hashtags': ['#Crypto', f"#{coin['item']['symbol']}", '#Trending']
+                        'source': 'CoinGecko'
                     }
                     stories.append(story)
         except Exception as e:
             logger.error(f"Error fetching CoinGecko trending: {e}")
             
-        # CoinDesk RSS - only last 6 hours for ultra-fresh crypto news
+        # CoinDesk RSS - last 24 hours
         try:
             feed = feedparser.parse('https://www.coindesk.com/arc/outboundfeeds/rss/')
             current_time = datetime.now()
-            for entry in feed.entries[:15]:  # Check more entries for recent content
-                # Check if article is from last 6 hours (ultra-fresh for crypto)
+            for entry in feed.entries[:20]:
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     article_time = datetime(*entry.published_parsed[:6])
                     hours_old = (current_time - article_time).total_seconds() / 3600
-                    if hours_old > 6:  # Skip if older than 6 hours
+                    if hours_old > 24:
                         continue
                         
-                if any(keyword in entry.title.lower() for keyword in ['hack', 'exploit', 'surge', 'crash', 'breakthrough', 'launch', 'adoption', 'pump', 'rally', 'spike', 'soar']):
-                    story = {
-                        'title': entry.title,
-                        'content': entry.summary[:200] + '...' if len(entry.summary) > 200 else entry.summary,
-                        'url': entry.link,
-                        'type': 'crypto',
-                        'hashtags': self.get_relevant_hashtags(entry.title, 'crypto'),
-                        'published': article_time if hasattr(entry, 'published_parsed') else current_time,
-                        'hours_old': hours_old if hasattr(entry, 'published_parsed') else 0
-                    }
-                    stories.append(story)
+                story = {
+                    'title': entry.title,
+                    'content': entry.summary[:300] if hasattr(entry, 'summary') else '',
+                    'url': entry.link,
+                    'type': 'crypto',
+                    'source': 'CoinDesk',
+                    'published': article_time,
+                    'hours_old': hours_old
+                }
+                stories.append(story)
         except Exception as e:
             logger.error(f"Error fetching CoinDesk RSS: {e}")
             
+        # Cointelegraph RSS
+        try:
+            feed = feedparser.parse('https://cointelegraph.com/rss')
+            current_time = datetime.now()
+            for entry in feed.entries[:15]:
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    article_time = datetime(*entry.published_parsed[:6])
+                    hours_old = (current_time - article_time).total_seconds() / 3600
+                    if hours_old > 24:
+                        continue
+                        
+                story = {
+                    'title': entry.title,
+                    'content': entry.summary[:300] if hasattr(entry, 'summary') else '',
+                    'url': entry.link,
+                    'type': 'crypto',
+                    'source': 'Cointelegraph',
+                    'published': article_time,
+                    'hours_old': hours_old
+                }
+                stories.append(story)
+        except Exception as e:
+            logger.error(f"Error fetching Cointelegraph RSS: {e}")
+            
+        # CryptoSlate RSS
+        try:
+            feed = feedparser.parse('https://cryptoslate.com/feed/')
+            current_time = datetime.now()
+            for entry in feed.entries[:10]:
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    article_time = datetime(*entry.published_parsed[:6])
+                    hours_old = (current_time - article_time).total_seconds() / 3600
+                    if hours_old > 24:
+                        continue
+                        
+                story = {
+                    'title': entry.title,
+                    'content': entry.summary[:300] if hasattr(entry, 'summary') else '',
+                    'url': entry.link,
+                    'type': 'crypto',
+                    'source': 'CryptoSlate',
+                    'published': article_time,
+                    'hours_old': hours_old
+                }
+                stories.append(story)
+        except Exception as e:
+            logger.error(f"Error fetching CryptoSlate RSS: {e}")
+            
         return stories
         
-    def get_relevant_hashtags(self, title, story_type):
-        """Get relevant hashtags based on story content"""
-        hashtags = []
+    def summarize_news(self, story):
+        """Create a WatcherGuru-style summary"""
+        title = story['title']
+        content = story.get('content', '')
         
-        if story_type == 'crypto':
-            if 'bitcoin' in title.lower() or 'btc' in title.lower():
-                hashtags.extend(['#Bitcoin', '#BTC'])
-            if 'ethereum' in title.lower() or 'eth' in title.lower():
-                hashtags.extend(['#Ethereum', '#ETH'])
-            if any(word in title.lower() for word in ['hack', 'exploit', 'security']):
-                hashtags.append('#CyberSecurity')
-            if any(word in title.lower() for word in ['defi', 'yield', 'liquidity']):
-                hashtags.append('#DeFi')
-            if any(word in title.lower() for word in ['nft', 'collectible', 'art']):
-                hashtags.append('#NFT')
-            hashtags.append('#Crypto')
-        else:  # AI
-            if 'chatgpt' in title.lower() or 'gpt' in title.lower():
-                hashtags.extend(['#ChatGPT', '#OpenAI'])
-            if 'claude' in title.lower():
-                hashtags.append('#Claude')
-            if 'machine learning' in title.lower() or 'ml' in title.lower():
-                hashtags.append('#MachineLearning')
-            if 'neural' in title.lower():
-                hashtags.append('#DeepLearning')
-            hashtags.append('#AI')
+        # Clean title
+        title = re.sub(r'[^\w\s$%:.-]', '', title)
+        title = title.replace('\n', ' ').strip()
+        
+        # Extract key info
+        breaking_keywords = ['breaking', 'urgent', 'alert', 'just in', 'developing']
+        price_keywords = ['surge', 'pump', 'crash', 'rally', 'spike', 'soar', 'dive', 'plunge']
+        
+        # Format based on content
+        if any(keyword in title.lower() for keyword in breaking_keywords):
+            prefix = 'BREAKING: '
+        elif any(keyword in title.lower() for keyword in price_keywords):
+            prefix = 'JUST IN: '
+        else:
+            prefix = ''
             
-        return hashtags[:3]  # Limit to 3 hashtags
+        # Extract price if mentioned
+        price_match = re.search(r'\$[\d,]+(?:\.\d+)?', title + ' ' + content)
+        if price_match:
+            price_info = f" at {price_match.group()}"
+        else:
+            price_info = ''
+            
+        # Create summary
+        summary = f"{prefix}{title}{price_info}"
+        
+        # Ensure under 280 characters
+        if len(summary) > 280:
+            summary = summary[:277] + '...'
+            
+        return summary
         
     def get_ai_news(self):
         """Fetch AI news from multiple sources"""
         stories = []
         
-        # MIT Technology Review AI RSS - last 3 days (more flexibility for AI news)
+        # VentureBeat AI RSS
         try:
-            feed = feedparser.parse('https://www.technologyreview.com/feed/')
+            feed = feedparser.parse('https://venturebeat.com/category/ai/feed/')
             current_time = datetime.now()
-            for entry in feed.entries[:8]:  # Check AI entries
-                # Check if article is from last 3 days (more flexible for AI)
+            for entry in feed.entries[:10]:
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     article_time = datetime(*entry.published_parsed[:6])
-                    days_old = (current_time - article_time).days
-                    if days_old > 3:  # Skip if older than 3 days
+                    hours_old = (current_time - article_time).total_seconds() / 3600
+                    if hours_old > 24:
                         continue
                         
-                if any(keyword in entry.title.lower() for keyword in ['ai breakthrough', 'artificial intelligence', 'machine learning', 'openai', 'chatgpt', 'gpt-4', 'claude', 'neural network', 'deep learning']):
-                    story = {
-                        'title': entry.title,
-                        'content': entry.summary[:200] + '...' if len(entry.summary) > 200 else entry.summary,
-                        'url': entry.link,
-                        'type': 'ai',
-                        'hashtags': self.get_relevant_hashtags(entry.title, 'ai'),
-                        'published': article_time if hasattr(entry, 'published_parsed') else current_time,
-                        'days_old': days_old if hasattr(entry, 'published_parsed') else 0
-                    }
-                    stories.append(story)
+                story = {
+                    'title': entry.title,
+                    'content': entry.summary[:300] if hasattr(entry, 'summary') else '',
+                    'url': entry.link,
+                    'type': 'ai',
+                    'source': 'VentureBeat',
+                    'published': article_time,
+                    'hours_old': hours_old
+                }
+                stories.append(story)
         except Exception as e:
-            logger.error(f"Error fetching MIT Tech Review: {e}")
+            logger.error(f"Error fetching VentureBeat AI: {e}")
             
-        # Hacker News AI stories
+        # TechCrunch AI RSS
         try:
-            response = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json', timeout=10)
-            if response.status_code == 200:
-                top_stories = response.json()[:20]
-                for story_id in top_stories:
-                    story_response = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{story_id}.json', timeout=5)
-                    if story_response.status_code == 200:
-                        story_data = story_response.json()
-                        if story_data.get('title') and any(keyword in story_data['title'].lower() for keyword in ['openai', 'chatgpt', 'llm', 'gpt-4', 'gpt-3', 'claude', 'artificial intelligence breakthrough', 'ai model', 'machine learning breakthrough']):
-                            story = {
-                                'title': story_data['title'],
-                                'content': f"Discussion on Hacker News with {story_data.get('score', 0)} points",
-                                'url': story_data.get('url', f"https://news.ycombinator.com/item?id={story_id}"),
-                                'type': 'ai',
-                                'hashtags': self.get_relevant_hashtags(story_data['title'], 'ai')
-                            }
-                            stories.append(story)
-                            if len(stories) >= 3:
-                                break
+            feed = feedparser.parse('https://techcrunch.com/category/artificial-intelligence/feed/')
+            current_time = datetime.now()
+            for entry in feed.entries[:10]:
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    article_time = datetime(*entry.published_parsed[:6])
+                    hours_old = (current_time - article_time).total_seconds() / 3600
+                    if hours_old > 24:
+                        continue
+                        
+                story = {
+                    'title': entry.title,
+                    'content': entry.summary[:300] if hasattr(entry, 'summary') else '',
+                    'url': entry.link,
+                    'type': 'ai',
+                    'source': 'TechCrunch',
+                    'published': article_time,
+                    'hours_old': hours_old
+                }
+                stories.append(story)
         except Exception as e:
-            logger.error(f"Error fetching Hacker News: {e}")
+            logger.error(f"Error fetching TechCrunch AI: {e}")
+            
+        # AI News RSS
+        try:
+            feed = feedparser.parse('https://www.artificialintelligence-news.com/feed/')
+            current_time = datetime.now()
+            for entry in feed.entries[:10]:
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    article_time = datetime(*entry.published_parsed[:6])
+                    hours_old = (current_time - article_time).total_seconds() / 3600
+                    if hours_old > 24:
+                        continue
+                        
+                story = {
+                    'title': entry.title,
+                    'content': entry.summary[:300] if hasattr(entry, 'summary') else '',
+                    'url': entry.link,
+                    'type': 'ai',
+                    'source': 'AI News',
+                    'published': article_time,
+                    'hours_old': hours_old
+                }
+                stories.append(story)
+        except Exception as e:
+            logger.error(f"Error fetching AI News: {e}")
             
         return stories
         
     def filter_interesting_stories(self, stories):
-        """Filter stories for 'cool and interesting' content"""
-        interesting_keywords = [
-            'breakthrough', 'revolutionary', 'first ever', 'record', 'massive', 'huge',
-            'hack', 'exploit', 'vulnerability', 'surge', 'crash', 'skyrocket',
-            'launch', 'release', 'unveil', 'announce', 'partnership', 'acquisition',
-            'milestone', 'achievement', 'innovation', 'disruption', 'game-changer',
-            'billion', 'million', 'new high', 'all-time', 'major', 'funding'
+        """Filter stories for important/breaking news"""
+        high_priority_keywords = [
+            'breaking', 'urgent', 'alert', 'just in', 'developing',
+            'hack', 'exploit', 'vulnerability', 'breach', 'attack',
+            'surge', 'crash', 'skyrocket', 'plunge', 'rally', 'spike',
+            'record', 'all-time', 'new high', 'new low', 'milestone',
+            'launch', 'release', 'unveil', 'announce', 'partnership',
+            'acquisition', 'merger', 'ipo', 'funding', 'investment',
+            'billion', 'million', 'massive', 'huge', 'major',
+            'breakthrough', 'revolutionary', 'first ever', 'innovation',
+            'approval', 'regulation', 'ban', 'legal', 'court',
+            'dormant', 'whale', 'transfer', 'moved', 'activated'
         ]
         
-        # Exclude irrelevant content
         exclude_keywords = [
-            'road', 'travel', 'transportation', 'geography', 'taiga', 'highway',
-            'recipe', 'cooking', 'food', 'restaurant', 'weather', 'climate'
+            'road', 'travel', 'transportation', 'geography', 'highway',
+            'recipe', 'cooking', 'food', 'restaurant', 'weather',
+            'sports', 'entertainment', 'celebrity', 'movie', 'music'
         ]
         
         filtered_stories = []
         for story in stories:
-            story_text = (story['title'] + ' ' + story['content']).lower()
+            story_text = (story['title'] + ' ' + story.get('content', '')).lower()
             
-            # Skip if contains excluded keywords
+            # Skip excluded content
             if any(keyword in story_text for keyword in exclude_keywords):
                 continue
                 
-            # Only include if contains interesting keywords
-            if any(keyword in story_text for keyword in interesting_keywords):
+            # Include high priority or recent stories
+            if (any(keyword in story_text for keyword in high_priority_keywords) or 
+                story.get('hours_old', 999) < 6):
                 filtered_stories.append(story)
                 
         return filtered_stories
         
     def format_post(self, story):
-        """Format story into a professional, engaging post"""
+        """Format story into WatcherGuru-style simple post"""
+        # Use the summarize_news method for clean formatting
+        return self.summarize_news(story)
         
-        # Enhanced emoji mapping with variety
-        emoji_map = {
-            'crypto': {
-                'surge': '🚀', 'pump': '📈', 'rally': '💹', 'spike': '⚡',
-                'hack': '🚨', 'exploit': '⚠️', 'launch': '🌟', 'adoption': '💎',
-                'breakthrough': '🔥', 'default': '💰'
-            },
-            'ai': {
-                'breakthrough': '🔬', 'launch': '🚀', 'model': '🧠', 'chatgpt': '💬',
-                'openai': '💡', 'claude': '🤖', 'innovation': '⚡', 'default': '🤖'
-            }
-        }
+    def check_rate_limit(self):
+        """Check if enough time has passed since last post"""
+        if self.last_post_time is None:
+            return True
         
-        # Smart emoji selection based on content
-        story_lower = (story['title'] + ' ' + story.get('content', '')).lower()
-        story_type = story['type']
-        emoji = emoji_map[story_type]['default']
+        # Minimum 2 hours between posts
+        time_diff = time.time() - self.last_post_time
+        return time_diff >= 7200  # 2 hours
         
-        for keyword, emoji_choice in emoji_map[story_type].items():
-            if keyword in story_lower:
-                emoji = emoji_choice
-                break
+    def should_post_now(self):
+        """Check if we should post based on time and rate limiting"""
+        current_hour = datetime.now().hour
         
-        # Clean and format title
-        title = story['title'].strip()
-        if title.startswith(('🚀', '💰', '🤖', '🧠', '⚡', '🌟', '🔥', '💎')):
-            title = title[2:].strip()  # Remove existing emoji
-        
-        # Build professional post structure
-        if story['type'] == 'crypto':
-            # Crypto posts - emphasize market action
-            post = f"{emoji} {title}\n\n"
-        else:
-            # AI posts - emphasize innovation
-            post = f"{emoji} {title}\n\n"
-        
-        # Add compelling context with better formatting
-        if story.get('content') and len(story['content']) > 15:
-            context = story['content'].strip()
-            # Clean up common RSS artifacts
-            context = context.replace('...', '').replace('[...]', '').strip()
-            if len(context) > 85:
-                context = context[:82] + '...'
-            post += f"→ {context}\n\n"
-        
-        # Add strategic hashtags (max 3 for readability)
-        hashtags = story.get('hashtags', [])[:3]  # Limit to 3
-        if hashtags:
-            post += f"{' '.join(hashtags)}\n\n"
-        
-        # Clean link formatting with actual URL
-        source_name = self.get_source_name(story['url'])
-        post += f"🔗 {source_name}: {story['url']}"
-        
-        # Ensure under 280 characters with fallback
-        if len(post) > 280:
-            # Shorter version if too long
-            short_context = story.get('content', '')[:45] + '...' if story.get('content') else ''
-            post = f"{emoji} {title}\n\n"
-            if short_context:
-                post += f"→ {short_context}\n\n"
-            post += f"{' '.join(hashtags[:2])}\n\n🔗 {story['url']}"
+        # Post during active hours (6 AM - 11 PM)
+        if current_hour < 6 or current_hour > 23:
+            return False
             
-            if len(post) > 280:
-                post = f"{emoji} {title}\n\n{' '.join(hashtags[:2])}\n\n🔗 {story['url']}"
-        
-        return post
-        
-    def get_source_name(self, url):
-        """Extract clean source name from URL"""
-        if 'coindesk.com' in url:
-            return 'CoinDesk'
-        elif 'coingecko.com' in url:
-            return 'CoinGecko'
-        elif 'technologyreview.com' in url:
-            return 'MIT Tech Review'
-        elif 'news.ycombinator.com' in url:
-            return 'Hacker News'
-        else:
-            # Extract domain name
-            try:
-                from urllib.parse import urlparse
-                domain = urlparse(url).netloc
-                return domain.replace('www.', '').title()
-            except:
-                return 'Source'
-        
-    def engage_with_community(self):
-        """Light engagement to grow followers (within free tier limits)"""
-        try:
-            # Search for recent tweets about crypto/AI
-            search_queries = ['#Bitcoin', '#Ethereum', '#AI', '#ChatGPT', '#DeFi']
-            query = random.choice(search_queries)
-            
-            # Get recent tweets
-            tweets = self.client.search_recent_tweets(
-                query=f"{query} -is:retweet",
-                max_results=10,  # Min allowed by Twitter API
-                tweet_fields=['public_metrics', 'author_id']
-            )
-            
-            if tweets.data:
-                # Light engagement - only 1 interaction per cycle
-                for tweet in tweets.data[:1]:  # Only 1 interaction per cycle (was 2)
-                    if tweet.public_metrics['like_count'] > 100:  # Higher threshold for quality
-                        try:
-                            self.client.like(tweet.id)
-                            logger.info(f"Liked high-quality tweet: {tweet.id}")
-                            break  # Only one action per cycle
-                        except Exception as e:
-                            logger.error(f"Failed to engage with tweet: {e}")
-                            
-        except Exception as e:
-            logger.error(f"Error in community engagement: {e}")
+        # Check rate limit
+        return self.check_rate_limit()
         
     def post_to_twitter(self, content):
         """Post content to Twitter"""
@@ -351,73 +353,88 @@ class NewsBot:
         """Main posting cycle - finds and posts interesting news"""
         logger.info("Starting posting cycle...")
         
+        # Check if we should post now
+        if not self.should_post_now():
+            logger.info("Not posting due to rate limiting or time restrictions")
+            return
+        
         # Get news from both sources
         crypto_stories = self.get_crypto_news()
         ai_stories = self.get_ai_news()
         
         all_stories = crypto_stories + ai_stories
+        logger.info(f"Found {len(all_stories)} total stories")
         
         # Filter for interesting content
         interesting_stories = self.filter_interesting_stories(all_stories)
+        logger.info(f"Found {len(interesting_stories)} interesting stories")
         
         # Remove already posted stories
         new_stories = [story for story in interesting_stories if story['url'] not in self.posted_stories]
+        logger.info(f"Found {len(new_stories)} new stories")
         
         if not new_stories:
             logger.info("No new interesting stories found")
-            # Still engage with community even if no new stories
-            self.engage_with_community()
             return
             
-        # Prioritize crypto stories by freshness, AI stories by quality
-        crypto_stories = [s for s in new_stories if s['type'] == 'crypto']
-        ai_stories = [s for s in new_stories if s['type'] == 'ai']
+        # Sort by priority: breaking news first, then by freshness
+        def story_priority(story):
+            title_lower = story['title'].lower()
+            breaking_score = 0
+            
+            if any(word in title_lower for word in ['breaking', 'urgent', 'alert']):
+                breaking_score += 1000
+            if any(word in title_lower for word in ['hack', 'exploit', 'breach']):
+                breaking_score += 800
+            if any(word in title_lower for word in ['surge', 'crash', 'spike']):
+                breaking_score += 600
+            if any(word in title_lower for word in ['record', 'all-time', 'milestone']):
+                breaking_score += 400
+                
+            # Subtract hours old (fresher = higher priority)
+            hours_old = story.get('hours_old', 24)
+            freshness_score = max(0, 24 - hours_old)
+            
+            return breaking_score + freshness_score
         
-        if crypto_stories:
-            # For crypto, prioritize by freshness (sort by hours_old if available)
-            crypto_stories.sort(key=lambda x: x.get('hours_old', 999))
-            best_story = crypto_stories[0]  # Most recent crypto story
-        elif ai_stories:
-            # For AI, just pick randomly from available stories
-            best_story = random.choice(ai_stories)
-        else:
-            best_story = random.choice(new_stories)
+        # Sort stories by priority
+        new_stories.sort(key=story_priority, reverse=True)
+        best_story = new_stories[0]
         
         # Format and post
         formatted_post = self.format_post(best_story)
+        logger.info(f"Attempting to post: {formatted_post[:50]}...")
         
         if self.post_to_twitter(formatted_post):
             self.posted_stories.add(best_story['url'])
             self.save_posted_stories()
-            logger.info(f"Posted story: {best_story['title']}")
-            
-            # Engage with community after posting
-            time.sleep(5)  # Quick wait before engaging (reduced from 30 seconds)
-            self.engage_with_community()
+            self.last_post_time = time.time()
+            logger.info(f"Successfully posted: {best_story['title']}")
         else:
             logger.error("Failed to post story")
             
-    def start_scheduler(self):
-        """Start the scheduled posting"""
-        logger.info("Starting news bot scheduler...")
-        
-        # Schedule posts 3 times daily
-        schedule.every().day.at("08:00").do(self.run_posting_cycle)
-        schedule.every().day.at("14:00").do(self.run_posting_cycle)  # 2 PM
-        schedule.every().day.at("20:00").do(self.run_posting_cycle)  # 8 PM
-        
-        logger.info("Scheduler started. Posts will be made at 8 AM, 2 PM, and 8 PM daily.")
+    def start_continuous_posting(self):
+        """Start continuous posting with intelligent timing"""
+        logger.info("Starting continuous news posting...")
         
         while True:
-            schedule.run_pending()
-            time.sleep(60)  # Check every minute
+            try:
+                self.run_posting_cycle()
+                # Wait 2-4 hours before next check
+                wait_time = random.randint(7200, 14400)  # 2-4 hours
+                logger.info(f"Waiting {wait_time/3600:.1f} hours before next cycle")
+                time.sleep(wait_time)
+            except Exception as e:
+                logger.error(f"Error in posting cycle: {e}")
+                time.sleep(1800)  # Wait 30 minutes on error
 
 if __name__ == "__main__":
     bot = NewsBot()
     
-    # Test run first
-    logger.info("Running test post...")
-    bot.run_posting_cycle()
-    
-    # Start scheduler
-    bot.start_scheduler()
+    # Check if running in GitHub Actions (single run)
+    if os.getenv('GITHUB_ACTIONS'):
+        logger.info("Running in GitHub Actions mode - single post")
+        bot.run_posting_cycle()
+    else:
+        logger.info("Running in continuous mode")
+        bot.start_continuous_posting()

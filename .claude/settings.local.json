@@ -3,7 +3,9 @@
     "allow": [
       "Bash(git config:*)",
       "Bash(git log:*)",
-      "Bash(git filter-branch:*)"
+      "Bash(git filter-branch:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(python:*)"
     ],
     "deny": []
   }
