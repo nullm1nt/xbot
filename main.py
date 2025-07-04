@@ -319,7 +319,7 @@ class NewsBot:
             # Get recent tweets
             tweets = self.client.search_recent_tweets(
                 query=f"{query} -is:retweet",
-                max_results=5,  # Reduced from 10
+                max_results=10,  # Min allowed by Twitter API
                 tweet_fields=['public_metrics', 'author_id']
             )
             
